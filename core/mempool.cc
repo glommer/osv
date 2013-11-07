@@ -386,6 +386,39 @@ bi::set<page_range,
                        &page_range::member_hook>
        > free_page_ranges __attribute__((init_priority((int)init_prio::fpranges)));
 
+// Our notion of free memory is "whatever is in the page ranges". Therefore it
+// starts at 0, and increases as we add page ranges.
+//
+// Updates to total should be fairly rare. We only expect updates upon boot,
+// and eventually hotplug in an hypothetical future
+static size_t _total(0);
+static size_t _free_memory(0);
+static size_t _watermark_lo(0);
+
+static void on_free(size_t mem)
+{
+    assert(mutex_owned(&free_page_ranges_lock));
+    _free_memory += mem;
+}
+
+static void on_alloc(size_t mem)
+{
+    assert(mutex_owned(&free_page_ranges_lock));
+    _free_memory -= mem;
+}
+
+static void on_new_memory(size_t mem)
+{
+    assert(mutex_owned(&free_page_ranges_lock));
+    _total += mem;
+    _watermark_lo = _total * 2 / 10;
+}
+
+namespace stats {
+    size_t free() { return _free_memory; }
+    size_t total() { return _total; }
+}
+
 static void* malloc_large(size_t size)
 {
     size = (size + page_size - 1) & ~(page_size - 1);
@@ -404,6 +437,7 @@ static void* malloc_large(size_t size)
                     header->size -= size;
                     ret_header = new (v + header->size) page_range(size);
                 }
+                on_alloc(size);
                 void* obj = ret_header;
                 obj += page_size;
                 trace_memory_malloc_large(obj, size);
@@ -435,6 +469,9 @@ static page_range* merge(page_range* a, page_range* b)
 static void free_page_range_locked(page_range *range)
 {
     auto i = free_page_ranges.insert(*range).first;
+
+    on_free(range->size);
+
     if (i != free_page_ranges.begin()) {
         i = free_page_ranges.iterator_to(*merge(&*boost::prior(i), &*i));
     }
@@ -497,6 +534,7 @@ static void refill_page_buffer()
                 auto p = &*it;
                 auto size = std::min(p->size, (limit - pbuf.nr) * page_size);
                 p->size -= size;
+                on_alloc(size);
                 void* pages = static_cast<void*>(p) + p->size;
                 if (!p->size) {
                     free_page_ranges.erase(*p);
@@ -559,6 +597,7 @@ static void* early_alloc_page()
 
         auto p = &*free_page_ranges.begin();
         p->size -= page_size;
+        on_alloc(page_size);
         void* page = static_cast<void*>(p) + p->size;
         if (!p->size) {
             free_page_ranges.erase(*p);
@@ -635,10 +674,20 @@ void* alloc_huge_page(size_t N)
             int endsize = v+range->size-ret-N;
             // Make the original page range smaller, pointing to the part before
             // our ret (if there's nothing before, remove this page range)
-            if (ret==v)
+            if (ret==v) {
                 free_page_ranges.erase(*range);
-            else
+                on_alloc(N);
+            } else {
+                // Note that this is is done conditionally because we are
+                // operating page ranges. That is what is left on our page
+                // ranges, so that is what we bill. It doesn't matter that we
+                // are currently allocating "N" bytes.  The difference will be
+                // later on wiped by the on_free() call that exists within
+                // free_page_range in the conditional right below us.
+                on_alloc(range->size - (ret - v));
                 range->size = ret-v;
+            }
+
             // Create a new page range for the endsize part (if there is one)
             if (endsize > 0) {
                 void *e = (void *)(ret+N);
@@ -680,6 +729,11 @@ void free_initial_memory_range(void* addr, size_t size)
     if (!size) {
         return;
     }
+
+    WITH_LOCK(free_page_ranges_lock) {
+        on_new_memory(size);
+    }
+
     free_page_range(addr, size);
 
 }
