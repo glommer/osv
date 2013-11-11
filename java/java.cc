@@ -9,7 +9,7 @@
 #include <jni.h>
 #include <string.h>
 #include "debug.hh"
-#include "mempool.hh"
+#include "jvm_balloon.hh"
 
 // java.so is similar to the standard "java" command line launcher in Linux.
 //
@@ -156,6 +156,7 @@ int main(int argc, char **argv)
         env->SetObjectArrayElement(args, index++, env->NewStringUTF(argv[i]));
     }
 
+    jvm_balloon_shrinker balloon(jvm);
     env->CallStaticVoidMethod(mainclass, mainmethod, args);
 
     // DestroyJavaVM() waits for all all non-daemon threads to end, and
