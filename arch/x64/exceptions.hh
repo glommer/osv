@@ -85,4 +85,26 @@ extern "C" {
 
 bool fixup_fault(exception_frame*);
 
+class memcpy_decoder {
+private:
+    ulong _pc;
+    ulong _word_size;
+public:
+    memcpy_decoder(ulong pc, ulong word_size);
+    bool operator<(const memcpy_decoder b) const {
+        return _pc < b._pc;
+    }
+
+    bool operator==(const ulong pc) const {
+        return _pc == pc;
+    }
+
+    void memcpy_fixup(exception_frame *ef, size_t fixup);
+    unsigned char *dest(exception_frame *ef);
+    unsigned char *src(exception_frame *ef);
+    ulong size(exception_frame *ef);
+} __attribute__((packed));
+
+memcpy_decoder *memcpy_find_decoder(exception_frame *ef);
+
 #endif
