@@ -26,6 +26,9 @@ unsigned libc_flags_to_mmap(int flags)
     if (flags & MAP_POPULATE) {
         mmap_flags |= mmu::mmap_populate;
     }
+    if (flags & MAP_UNINITIALIZED) {
+        mmap_flags |= mmu::mmap_uninitialized;
+    }
     return mmap_flags;
 }
 
