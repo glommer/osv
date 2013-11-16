@@ -9,12 +9,15 @@
 #define MEMPOOL_HH
 
 #include <cstdint>
+#include <functional>
+#include <list>
 #include <boost/intrusive/set.hpp>
 #include <boost/intrusive/list.hpp>
 #include <osv/mutex.h>
 #include <arch.hh>
 #include <osv/pagealloc.hh>
 #include <osv/percpu.hh>
+#include <osv/condvar.h>
 
 namespace memory {
 
@@ -104,6 +107,61 @@ void free_initial_memory_range(void* addr, size_t size);
 void enable_debug_allocator();
 
 extern bool tracker_enabled;
+
+enum class pressure { RELAXED, NORMAL, PRESSURE, EMERGENCY };
+
+class shrinker {
+public:
+    shrinker(std::string name);
+   // std::function<size_t (size_t)> shrink, std::function<size_t (size_t)> expand); 
+    virtual ~shrinker() {}  // allows deleting a derived class through a base class
+    virtual size_t request_memory(size_t n) = 0;
+    virtual size_t release_memory(size_t n) = 0; 
+    std::string name() { return _name; };
+
+    bool should_shrink(ssize_t target) { return _shrinker_enabled && (target > 0); }
+    bool should_relax(ssize_t target) { return _relaxer_enabled && (target < 0); }
+private:
+    std::string _name;
+    int _shrinker_enabled = 0;
+    int _relaxer_enabled = 0;
+};
+
+class reclaimer {
+public:
+    reclaimer ();
+    void wake(pressure p);
+    void wake();
+    void wait_for_memory(size_t mem);
+    template <class Pred>
+    void wait_for_memory(size_t mem, Pred pred);
+    void wait_for_minimum_memory();
+
+    friend void start_reclaimer();
+    friend class shrinker;
+private:
+    struct wait_record : boost::intrusive::list_base_hook<> {
+        unsigned long size;
+    };
+    boost::intrusive::list<wait_record,
+                           boost::intrusive::base_hook<wait_record>,
+                           boost::intrusive::constant_time_size<false>> _waiters;
+
+    void _do_reclaim();
+    condvar _oom_blocked; // Callers are blocked due to lack of memory
+    condvar _blocked;     // The reclaimer itself is blocked waiting for pressure condition
+    sched::thread *_thread;
+
+    std::vector<shrinker *> _shrinkers;
+    mutex _shrinkers_mutex;
+    unsigned int _active_relaxers = 0;
+    unsigned int _active_shrinkers = 0;
+    bool _can_shrink();
+
+    pressure pressure_level();
+    ssize_t bytes_until_normal(pressure curr);
+    ssize_t bytes_until_normal() { return bytes_until_normal(pressure_level()); }
+};
 
 namespace stats {
     size_t free();

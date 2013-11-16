@@ -11,6 +11,7 @@
 #include <cassert>
 #include <cstdint>
 #include <new>
+#include <thread>
 #include <boost/utility.hpp>
 #include <string.h>
 #include "libc/libc.hh"
@@ -36,6 +37,7 @@ TRACEPOINT(trace_memory_realloc, "in=%p, newlen=%d, out=%p", void *, size_t, voi
 TRACEPOINT(trace_memory_page_alloc, "page=%p", void*);
 TRACEPOINT(trace_memory_page_free, "page=%p", void*);
 TRACEPOINT(trace_memory_huge_failure, "page ranges=%d", unsigned long);
+TRACEPOINT(trace_memory_reclaim, "shrinker %s, target=%d, delta=%d", const char *, long, long);
 
 bool smp_allocator = false;
 
@@ -394,17 +396,34 @@ bi::set<page_range,
 static size_t _total(0);
 static size_t _free_memory(0);
 static size_t _watermark_lo(0);
+static size_t _watermark_desperately_lo(0);
+static size_t _watermark_hi(0);
+
+// More or less 1 % of a 1G guest (rounded)
+static size_t constexpr max_emergency_pool_size = 16 << 20;
+// At least one (x86) huge page worth of size;
+static size_t constexpr min_emergency_pool_size = 2 << 20;
+
+reclaimer reclaimer_thread
+    __attribute__((init_priority((int)init_prio::reclaimer)));
 
 static void on_free(size_t mem)
 {
     assert(mutex_owned(&free_page_ranges_lock));
+
     _free_memory += mem;
+    if (_watermark_hi && (_free_memory > _watermark_hi)) {
+        reclaimer_thread.wake(pressure::RELAXED);
+    }
 }
 
 static void on_alloc(size_t mem)
 {
     assert(mutex_owned(&free_page_ranges_lock));
     _free_memory -= mem;
+    if (_free_memory < _watermark_lo) {
+        reclaimer_thread.wake(pressure::PRESSURE);
+    }
 }
 
 static void on_new_memory(size_t mem)
@@ -412,6 +431,10 @@ static void on_new_memory(size_t mem)
     assert(mutex_owned(&free_page_ranges_lock));
     _total += mem;
     _watermark_lo = _total * 2 / 10;
+    _watermark_desperately_lo = std::min(max_emergency_pool_size, _total / 100);
+    if (_watermark_desperately_lo < min_emergency_pool_size) {
+        _watermark_desperately_lo = min_emergency_pool_size;
+    }
 }
 
 namespace stats {
@@ -419,35 +442,243 @@ namespace stats {
     size_t total() { return _total; }
 }
 
+void reclaimer::wake(pressure p)
+{
+    if (!_thread) {
+        return;
+    }
+
+    if (((p > pressure::NORMAL) && _active_shrinkers) ||
+       ((p < pressure::NORMAL) && _active_relaxers)) {
+        _blocked.wake_one();
+    }
+}
+
+void reclaimer::wake()
+{
+    if (_thread) {
+        _blocked.wake_one();
+    }
+}
+
+pressure reclaimer::pressure_level()
+{
+    assert(mutex_owned(&free_page_ranges_lock));
+    if (_free_memory < _watermark_lo) {
+        return pressure::PRESSURE;
+    }
+    if (_watermark_hi && (_free_memory > _watermark_hi)) {
+        return pressure::RELAXED;
+    }
+    return pressure::NORMAL;
+}
+
+ssize_t reclaimer::bytes_until_normal(pressure curr)
+{
+    assert(mutex_owned(&free_page_ranges_lock));
+    if (curr == pressure::NORMAL) {
+        return 0;
+    } else if (curr == pressure::PRESSURE) {
+        return _watermark_lo - _free_memory;
+    } else {
+        // Negative if we're relaxed
+        return _watermark_hi - _free_memory;
+    }
+}
+
+void reclaimer::wait_for_minimum_memory()
+{
+    // The first test will prevent us from calling wait_until before the
+    // scheduler is fully initialized. But we also want to allow anything that
+    // is called from the reclaimer thread to proceed, since they may need the
+    // emergency memory to release some of its memory.
+    if ((!_thread) || (sched::thread::current() == _thread))
+        return;
+
+    // Nothing could possibly give us memory back, might as well use up
+    // everything in the hopes that we only need a tiny bit more..
+    if (_free_memory < _watermark_desperately_lo) {
+        wait_for_memory(_watermark_desperately_lo - _free_memory);
+    }
+}
+
+template <class Pred>
+void reclaimer::wait_for_memory(size_t mem, Pred pred)
+{
+    if (!_thread)
+        return;
+
+    assert(sched::thread::current() !=  _thread);
+    wait_record wr;
+    wr.size = mem;
+
+    if (!pred) {
+        _waiters.push_front(wr);
+        wake();
+        _oom_blocked.wait_until(free_page_ranges_lock, pred);
+        _waiters.erase(_waiters.iterator_to(wr));
+    }
+}
+
+// Allocating memory here can lead to a stack overflow
+void reclaimer::wait_for_memory(size_t mem)
+{
+    if (!_thread)
+        return;
+
+    assert(sched::thread::current() !=  _thread);
+    wait_record wr;
+    wr.size = mem;
+
+    _waiters.push_front(wr);
+    wake();
+    _oom_blocked.wait(free_page_ranges_lock);
+    _waiters.erase(_waiters.iterator_to(wr));
+}
+
 static void* malloc_large(size_t size)
 {
     size = (size + page_size - 1) & ~(page_size - 1);
     size += page_size;
 
-    WITH_LOCK(free_page_ranges_lock) {
-        for (auto i = free_page_ranges.begin(); i != free_page_ranges.end(); ++i) {
-            auto header = &*i;
-            page_range* ret_header;
-            if (header->size >= size) {
-                if (header->size == size) {
-                    free_page_ranges.erase(i);
-                    ret_header = header;
-                } else {
-                    void *v = header;
-                    header->size -= size;
-                    ret_header = new (v + header->size) page_range(size);
+    while (true) {
+        WITH_LOCK(free_page_ranges_lock) {
+            reclaimer_thread.wait_for_minimum_memory();
+
+            for (auto i = free_page_ranges.begin(); i != free_page_ranges.end(); ++i) {
+                auto header = &*i;
+                page_range* ret_header;
+                if (header->size >= size) {
+                    if (header->size == size) {
+                        free_page_ranges.erase(i);
+                        ret_header = header;
+                    } else {
+                        void *v = header;
+                        header->size -= size;
+                        ret_header = new (v + header->size) page_range(size);
+                    }
+                    on_alloc(size);
+                    void* obj = ret_header;
+                    obj += page_size;
+                    trace_memory_malloc_large(obj, size);
+                    return obj;
                 }
-                on_alloc(size);
-                void* obj = ret_header;
-                obj += page_size;
-                trace_memory_malloc_large(obj, size);
-                return obj;
+            }
+            reclaimer_thread.wait_for_memory(size);
+        }
+    }
+}
+
+shrinker::shrinker(std::string name)
+    : _name(name)
+{
+    WITH_LOCK(reclaimer_thread._shrinkers_mutex) {
+        reclaimer_thread._shrinkers.push_back(this);
+    }
+}
+
+reclaimer::reclaimer()
+    : _thread(NULL)
+{
+    std::thread tmp([&] {
+        _thread = sched::thread::current();
+        do {
+            _do_reclaim();
+        } while (true);
+    });
+    tmp.detach();
+}
+
+bool reclaimer::_can_shrink()
+{
+    auto p = pressure_level();
+    // The active fields are protected by the _shrinkers_mutex lock, but there
+    // is no need to take it. Worst that can happen is that we either defer
+    // this pass, or take an extra pass without need for it.
+    if (p == pressure::RELAXED) {
+        return _active_relaxers;
+    }
+    if (p == pressure::PRESSURE) {
+        return _active_shrinkers;
+    }
+    return false;
+}
+
+void reclaimer::_do_reclaim()
+{
+    ssize_t target;
+    size_t current_memory;
+    WITH_LOCK(free_page_ranges_lock) {
+        _blocked.wait_until(free_page_ranges_lock,
+            // We should only try to shrink if there are available shrinkers.
+            // But if we have waiters, then we go nevertheless and try our best.
+            [=] { return !(_waiters.empty()) ||
+                         (_can_shrink() && (pressure_level() != pressure::NORMAL)); }
+        );
+        target = bytes_until_normal();
+        current_memory = _free_memory;
+    }
+
+    // FIXME: This simple loop works only because we have a single shrinker
+    // When we have more, we need to probe them and decide how much to take from
+    // each of them.
+    WITH_LOCK(_shrinkers_mutex) {
+        // We execute this outside the free_page_ranges lock, so the threads
+        // freeing memory (or allocating, for that matter) will have the chance
+        // to manipulate the free_page_ranges structure.  Executing the
+        // shrinkers/relaxers with the lock held would result in a deadlock.
+        for (auto s : _shrinkers) {
+            auto mem = current_memory;
+            if (s->should_shrink(target)) {
+                s->request_memory(target);
+            } else if (s->should_relax(target < 0)) {
+                s->release_memory(-target);
+            }
+            trace_memory_reclaim(s->name().c_str(), target, _free_memory - mem);
+        }
+    }
+
+    WITH_LOCK(free_page_ranges_lock) {
+        if (!_watermark_hi && _active_relaxers) {
+            _watermark_hi = 9 * _total / 10;
+        } else if (_watermark_hi && !_active_relaxers) {
+            _watermark_hi = 0;
+        }
+
+        if (target > 0) {
+            // If there are not waiters, pressure is still starting to build
+            // up, but we are still safe.
+            if (_waiters.empty()) {
+                return;
+            }
+
+            _waiters.sort([](const wait_record a, const wait_record b) { return a.size < b.size; });
+
+            // We will loop through all waiters, seeing if the size they are
+            // waiting for is available. Since we don't have any facility to
+            // wake a specific waiter, we will wait them all if the smallest
+            // size is found. That should guarantee at least one of the waiters
+            // will be able to make progress. Any waiters who can't make
+            // progress will end up here again.
+            for (auto wr : _waiters) {
+                for (auto& header : free_page_ranges) {
+                    if (header.size >= wr.size) {
+                        _oom_blocked.wake_all();
+                        return;
+                    }
+                }
+            }
+            // Because we are not disposing of our waiters, we will be forced
+            // to enter this method again. Even if no waiters can be serviced,
+            // if we could free at least some memory at this stage, there is
+            // still hope. So we won't abort.  But if we have waiters, and
+            // we're already using up all our reserves, then it is time to give
+            // up.
+            if (current_memory == _free_memory) {
+                abort("Out of memory: could not reclaim");
             }
         }
     }
-    debug(fmt("malloc_large(): out of memory: can't find %d bytes. aborting.\n")
-            % size);
-    abort();
 }
 
 static page_range* merge(page_range* a, page_range* b)
@@ -518,11 +749,12 @@ PERCPU(page_buffer, percpu_page_buffer);
 static void refill_page_buffer()
 {
     WITH_LOCK(free_page_ranges_lock) {
+        reclaimer_thread.wait_for_memory(mmu::page_size, [] {
+            return !free_page_ranges.empty();
+        });
+        reclaimer_thread.wait_for_minimum_memory();
+
         WITH_LOCK(preempt_lock) {
-            if (free_page_ranges.empty()) {
-                debug("alloc_page(): out of memory\n");
-                abort();
-            }
 
             auto& pbuf = *percpu_page_buffer;
             auto limit = (pbuf.max + 1) / 2;
@@ -699,6 +931,9 @@ void* alloc_huge_page(size_t N)
             // pages allocated. However, this would be inefficient, and since we
             // only use alloc_huge_page in one place, maybe not worth it.
         }
+
+        // Definitely a sign we are somewhat short on memory
+        reclaimer_thread.wake(pressure::PRESSURE);
         trace_memory_huge_failure(free_page_ranges.size());
         return NULL;
     }

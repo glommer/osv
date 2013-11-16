@@ -20,10 +20,10 @@ enum class init_prio : int {
     clock,
     hpet,
     vma_list,
+    reclaimer,
     sched,
     tracepoint_base,
     malloc_pools,
     idt,
 };
-
 #endif
