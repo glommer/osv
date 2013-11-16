@@ -18,13 +18,13 @@ enum class init_prio : int {
     notifiers,
     acpi,
     apic,
+    vma_list,
+    reclaimer,
     sched,
     clock,
     hpet,
-    vma_list,
     tracepoint_base,
     malloc_pools,
     idt,
 };
-
 #endif
