@@ -213,6 +213,7 @@ public:
     stack_info get_stack_info();
     cpu* tcpu() const __attribute__((no_instrument_function));
     void join();
+    void detach();
     void set_cleanup(std::function<void ()> cleanup);
     unsigned long id() __attribute__((no_instrument_function)); // guaranteed unique over system lifetime
     void* get_tls(ulong module);

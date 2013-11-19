@@ -673,6 +673,14 @@ void thread::join()
     }
 }
 
+void thread::detach()
+{
+    if (!_attr.detached) {
+        _attr.detached = true;
+        set_cleanup([=] { delete this; });
+    }
+}
+
 thread::stack_info thread::get_stack_info()
 {
     return _attr.stack;
