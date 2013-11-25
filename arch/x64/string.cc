@@ -8,6 +8,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <osv/string.h>
 #include "cpuid.hh"
 #include "debug.hh"
 #include "exceptions.hh"
@@ -53,12 +54,43 @@ void *memcpy_repmov_old(void *__restrict dest, const void *__restrict src, size_
     return ret;
 }
 
+extern "C"
+void *memcpy_backwards_repmov_old(void *__restrict dest, const void *__restrict src, size_t n)
+{
+    auto ret = dest;
+    auto nw = n / 8;
+    auto nb = n & 7;
+
+    dest += n;
+    src += n;
+
+    // Note that because we are copying backwards, we need to start with movsb in the end
+    asm volatile ("std\n" ::: "memory");
+    repmovsb(dest, src, nb);
+    repmovsq(dest, src, nw);
+    asm volatile ("cld\n" ::: "memory");
+    return ret;
+}
 
 extern "C"
 void *memcpy_repmov(void *dest, const void *src, size_t n)
 {
     auto ret = dest;
     repmovsb(dest, src, n);
+    return ret;
+}
+
+extern "C"
+void *memcpy_backwards_repmov(void *dest, const void *src, size_t n)
+{
+    auto ret = dest;
+
+    dest += n;
+    src += n;
+
+    asm volatile ("std\n" ::: "memory");
+    repmovsb(dest, src, n);
+    asm volatile ("cld\n" ::: "memory");
     return ret;
 }
 
@@ -71,8 +103,20 @@ void *(*resolve_memcpy())(void *__restrict dest, const void *__restrict src, siz
     return memcpy_repmov_old;
 }
 
+extern "C"
+void *(*resolve_memcpy_backwards())(void *__restrict dest, const void *__restrict src, size_t n)
+{
+    if (processor::features().repmovsb) {
+        return memcpy_backwards_repmov;
+    }
+    return memcpy_backwards_repmov_old;
+}
+
 void *memcpy(void *__restrict dest, const void *__restrict src, size_t n)
     __attribute__((ifunc("resolve_memcpy")));
+
+void *memcpy_backwards(void *__restrict dest, const void *__restrict src, size_t n)
+    __attribute__((ifunc("resolve_memcpy_backwards")));
 
 extern memcpy_decoder memcpy_decode_start[], memcpy_decode_end[];
 
