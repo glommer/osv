@@ -172,6 +172,7 @@ size_t jvm_balloon_shrinker::request_memory(size_t size)
         jthrowable exc = env->ExceptionOccurred();
         if (exc) {
             env->ExceptionClear();
+            deactivate_shrinker();
             break;
         }
 
@@ -220,6 +221,10 @@ size_t jvm_balloon_shrinker::release_memory(size_t size)
             auto b = &*balloons.begin();
             b->release(env);
             delete b;
+            // It might be that this shrinker was disabled due to excessive memory
+            // pressure, so we must take care to activate it. This should be a nop
+            // if the shrinker is already active, so do it always.
+            activate_shrinker();
         }
     } while (ret < size);
 

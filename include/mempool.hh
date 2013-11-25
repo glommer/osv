@@ -118,6 +118,9 @@ public:
     virtual size_t release_memory(size_t n) = 0;
     std::string name() { return _name; };
 
+    void deactivate_shrinker();
+    void activate_shrinker();
+
     bool should_shrink(ssize_t target) { return _shrinker_enabled && (target > 0); }
 private:
     std::string _name;
