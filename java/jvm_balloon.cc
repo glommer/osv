@@ -150,6 +150,7 @@ size_t jvm_balloon_shrinker::jvm_balloon_expand(JavaVM *vm, size_t size)
         jthrowable exc = env->ExceptionOccurred();
         if (exc) {
             env->ExceptionClear();
+            deactivate_shrinker();
             break;
         }
 
@@ -171,6 +172,10 @@ size_t jvm_balloon_shrinker::jvm_balloon_expand(JavaVM *vm, size_t size)
             jobject jref = env->NewGlobalRef(array);
             new balloon(static_cast<unsigned char *>(p), jref);
             ret += balloon_size;
+            if (balloons.size() == 1) {
+                // nop if already active
+                activate_relaxer();
+            }
         }
         env->ReleasePrimitiveArrayCritical(array, p, 0);
         // Avoid entering any endless loops. Fail imediately
@@ -201,6 +206,13 @@ size_t jvm_balloon_shrinker::jvm_balloon_shrink(JavaVM *vm, size_t size)
             auto b = &*balloons.begin();
             b->release(env);
             delete b;
+            // It might be that this shrinker was disabled due to excessive memory
+            // pressure, so we must take care to activate it. This should be a nop
+            // if the shrinker is already active, so do it always.
+            activate_shrinker();
+            if (balloons.empty()) {
+                deactivate_relaxer();
+            }
         }
     } while (ret < size);
 
@@ -249,7 +261,7 @@ void jvm_balloon_fault(exception_frame *ef)
 }
 
 jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
-    : shrinker("jvm_shrinker")
+    : shrinker("jvm_shrinker", true, false)
     , _vm(vm)
 {
 }

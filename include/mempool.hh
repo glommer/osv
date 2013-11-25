@@ -112,12 +112,17 @@ enum class pressure { RELAXED, NORMAL, PRESSURE, EMERGENCY };
 
 class shrinker {
 public:
-    shrinker(std::string name);
+    shrinker(std::string name, bool shrinker, bool relaxer);
    // std::function<size_t (size_t)> shrink, std::function<size_t (size_t)> expand); 
     virtual ~shrinker() {}  // allows deleting a derived class through a base class
     virtual size_t request_memory(size_t n) = 0;
     virtual size_t release_memory(size_t n) = 0; 
     std::string name() { return _name; };
+    void deactivate_relaxer();
+    void deactivate_shrinker();
+
+    void activate_relaxer();
+    void activate_shrinker();
 
     bool should_shrink(ssize_t target) { return _shrinker_enabled && (target > 0); }
     bool should_relax(ssize_t target) { return _relaxer_enabled && (target < 0); }
