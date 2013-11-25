@@ -129,9 +129,20 @@ private:
     bool _shared;
 };
 
+class jvm_balloon_vma : public vma {
+public:
+    jvm_balloon_vma(uintptr_t start, uintptr_t end);
+    virtual ~jvm_balloon_vma();
+    virtual void split(uintptr_t edge) override;
+    virtual error sync(uintptr_t start, uintptr_t end) override;
+    virtual void fault(uintptr_t addr, exception_frame *ef) override;
+};
+
 void* map_file(void* addr, size_t size, unsigned flags, unsigned perm,
               fileref file, f_offset offset);
 void* map_anon(void* addr, size_t size, unsigned flags, unsigned perm);
+void* map_jvm(void* addr, size_t size);
+
 void unmap(void* addr, size_t size);
 int protect(void *addr, size_t size, unsigned int perm);
 error msync(void* addr, size_t length, int flags);

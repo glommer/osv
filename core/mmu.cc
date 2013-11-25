@@ -974,6 +974,45 @@ void anon_vma::fault(uintptr_t addr, exception_frame *ef)
     }
 }
 
+jvm_balloon_vma::jvm_balloon_vma(uintptr_t start, uintptr_t end)
+    : vma(addr_range(start, end), mmu::perm_read, 0)
+{
+}
+
+void jvm_balloon_vma::split(uintptr_t edge)
+{
+    auto end = _range.end();
+    if (edge <= _range.start() || edge >= end) {
+        return;
+    }
+    auto * n = new jvm_balloon_vma(edge, end);
+    _range = addr_range(_range.start(), edge);
+    vma_list.insert(*n);
+}
+
+error jvm_balloon_vma::sync(uintptr_t start, uintptr_t end)
+{
+    return no_error();
+}
+
+void jvm_balloon_vma::fault(uintptr_t addr, exception_frame *ef)
+{
+    abort("Not yet");
+}
+
+jvm_balloon_vma::~jvm_balloon_vma()
+{
+}
+
+void* map_jvm(void* addr, size_t size)
+{
+    auto start = reinterpret_cast<uintptr_t>(addr);
+
+    auto* vma = new mmu::jvm_balloon_vma(start, start + size);
+    auto v = (void*) allocate(vma, start, size, false);
+    return v;
+}
+
 file_vma::file_vma(addr_range range, unsigned perm, fileref file, f_offset offset, bool shared)
     : vma(range, perm, 0)
     , _file(file)
