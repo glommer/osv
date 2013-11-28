@@ -531,6 +531,13 @@ struct id_cmp {
     bool operator()(const thread& th1, const thread& th2) const {
         return th1.id() < th2.id();
     }
+    bool operator()(const thread& th1, const unsigned long id2) const {
+        return th1.id() < id2;
+    }
+
+    bool operator()(const unsigned long& id1, const thread& th2) const {
+        return id1 < th2.id();
+    }
 };
 
 mutex thread_set_mutex;
@@ -542,6 +549,14 @@ typedef bi::set<thread,
                 > thread_set_type;
 thread_set_type thread_set __attribute__((init_priority((int)init_prio::threadlist)));
 unsigned long thread::_s_idgen;
+
+thread *thread::find_by_id(unsigned long id)
+{
+    auto th = thread_set.find(id, id_cmp());
+    if (th == thread_set.end())
+        return NULL;
+    return &*th;
+}
 
 void* thread::do_remote_thread_local_var(void* var)
 {
