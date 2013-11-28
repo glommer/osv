@@ -51,6 +51,7 @@
 #include <safe-ptr.hh>
 #include <osv/stubbing.hh>
 #include "drivers/pvpanic.hh"
+#include <api/sys/resource.h>
 
 #define __LC_LAST 13
 
@@ -354,5 +355,70 @@ int get_nprocs()
 clock_t times(struct tms *buffer)
 {
     debug("times not implemented\n");
+    return 0;
+}
+
+static int prio_find_thread(sched::thread **th, int which, int id)
+{
+    errno = 0;
+    if ((which == PRIO_USER) || (which == PRIO_PGRP)) {
+        return 0;
+    }
+
+    if (which != PRIO_PROCESS) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (id == 0) {
+        *th = sched::thread::current();
+    } else {
+        *th = sched::thread::find_by_id(id);
+    }
+
+    if (!th) {
+        errno = ESRCH;
+        return -1;
+    }
+    return 0;
+}
+
+int getpriority(int which, int id)
+{
+    sched::thread *th;
+    int ret = prio_find_thread(&th, which, id);
+    if (ret < 0) {
+        return ret;
+    }
+
+    // Case for which which is not a process and we should just return and not
+    // do anything
+    if (!th && !ret) {
+        return 0;
+    }
+
+    int prio = (th->priority() - 1) * 20;
+    if (prio < -19) {
+        prio = -19;
+    }
+    if (prio > 20) {
+        prio = 20;
+    }
+    return prio;
+}
+
+int setpriority(int which, int id, int prio)
+{
+    sched::thread *th;
+    int ret = prio_find_thread(&th, which, id);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!th && !ret) {
+        return 0;
+    }
+
+    float p = prio / 20.0 + 1;
+    th->set_priority(p);
     return 0;
 }
