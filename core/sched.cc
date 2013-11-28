@@ -527,13 +527,20 @@ void thread::stack_info::default_deleter(thread::stack_info si)
     free(si.begin);
 }
 
-mutex thread_list_mutex;
-typedef bi::list<thread,
+struct id_cmp {
+    bool operator()(const thread& th1, const thread& th2) const {
+        return th1.id() < th2.id();
+    }
+};
+
+mutex thread_set_mutex;
+typedef bi::set<thread,
+                 bi::compare<id_cmp>,
                  bi::member_hook<thread,
-                                 bi::list_member_hook<>,
-                                 &thread::_thread_list_link>
-                > thread_list_type;
-thread_list_type thread_list __attribute__((init_priority((int)init_prio::threadlist)));
+                                 bi::set_member_hook<>,
+                                 &thread::_thread_set_link>
+                > thread_set_type;
+thread_set_type thread_set __attribute__((init_priority((int)init_prio::threadlist)));
 unsigned long thread::_s_idgen;
 
 void* thread::do_remote_thread_local_var(void* var)
@@ -558,8 +565,8 @@ thread::thread(std::function<void ()> func, attr attr, bool main)
     , _ref_counter(1)
     , _joiner()
 {
-    WITH_LOCK(thread_list_mutex) {
-        thread_list.push_back(*this);
+    WITH_LOCK(thread_set_mutex) {
+        thread_set.push_back(*this);
         _id = _s_idgen++;
     }
     setup_tcb();
@@ -593,8 +600,8 @@ thread::~thread()
     if (!_attr.detached) {
         join();
     }
-    WITH_LOCK(thread_list_mutex) {
-        thread_list.erase(thread_list.iterator_to(*this));
+    WITH_LOCK(thread_set_mutex) {
+        thread_set.erase(thread_set.iterator_to(*this));
     }
     if (_attr.stack.deleter) {
         _attr.stack.deleter(_attr.stack);
@@ -800,7 +807,7 @@ void thread::timer_fired()
     wake();
 }
 
-unsigned long thread::id()
+unsigned long thread::id() const
 {
     return _id;
 }
@@ -1025,8 +1032,8 @@ void init_detached_threads_reaper()
 
 void start_early_threads()
 {
-    WITH_LOCK(thread_list_mutex) {
-        for (auto& t : thread_list) {
+    WITH_LOCK(thread_set_mutex) {
+        for (auto& t : thread_set) {
             if (&t == sched::thread::current()) {
                 continue;
             }

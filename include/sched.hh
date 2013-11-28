@@ -301,7 +301,7 @@ public:
     cpu* tcpu() const __attribute__((no_instrument_function));
     void join();
     void set_cleanup(std::function<void ()> cleanup);
-    unsigned long id() __attribute__((no_instrument_function)); // guaranteed unique over system lifetime
+    unsigned long id() const __attribute__((no_instrument_function)); // guaranteed unique over system lifetime
     void* get_tls(ulong module);
     void* setup_tls(ulong module, const void* tls_template,
             size_t init_size, size_t uninit_size);
