@@ -1,4 +1,9 @@
 {
    "modules":[
+    {
+        "name": "cassandra",
+        "type": "dir",
+        "path": "/home/glauber/osv-apps/cassandra"
+    }
    ]
 }
