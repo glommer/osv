@@ -87,8 +87,6 @@ void balloon::empty_area()
 
     _hole_size = end - _addr;
 
-    // For sure a jvm mapping
-    mmu::mark_jvm_mapping(_addr);
     mmu::map_jvm(_addr, _hole_size);
     balloons.insert(*this);
 }
@@ -274,4 +272,16 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
     : shrinker("jvm_shrinker")
     , _vm(vm)
 {
+    JNIEnv *env = NULL;
+    int status = _attach(&env);
+
+    auto monitor = env->FindClass("io/osv/OSvGCMonitor");
+    if (!monitor) {
+        debug("java.so: Can't find monitor class\n");
+    }
+
+    auto monmethod = env->GetStaticMethodID(monitor, "MonitorGC", "(J)V");
+    env->CallStaticVoidMethod(monitor, monmethod, this);
+
+    _detach(status);
 }
