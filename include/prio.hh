@@ -17,6 +17,7 @@ enum class init_prio : int {
     pthread,
     notifiers,
     acpi,
+    apic,
     sched,
     clock,
     hpet,

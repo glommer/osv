@@ -12,6 +12,7 @@
 #include <cpuid.hh>
 #include <processor.hh>
 #include "debug.hh"
+#include "prio.hh"
 
 namespace processor {
 
@@ -210,18 +211,19 @@ void x2apic::eoi()
     wrmsr(msr::X2APIC_EOI, 0);
 }
 
-apic_driver* create_apic_driver()
+apic_driver* apic;
+void __attribute__((constructor(init_prio::apic))) create_apic_driver()
 {
+    printf("creating apic\n");
     // TODO: Some Xen versions do not expose x2apic CPU feature
     //       but still support it. Should we do more precise detection?
     if (features().x2apic) {
-        return new x2apic;
+        apic = new x2apic;
     } else {
-        return new xapic;
+        apic = new xapic;
     };
 }
 
-apic_driver* apic = create_apic_driver();
 
 msi_message apic_driver::compose_msix(u8 vector, u8 dest_id)
 {
