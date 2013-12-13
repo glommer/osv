@@ -687,7 +687,10 @@ void evacuate(uintptr_t start, uintptr_t end)
         i->split(start);
         if (contains(start, end, *i)) {
             auto& dead = *i--;
-            unpopulate().operate(dead);
+            auto size = unpopulate().operate(dead);
+            if (dead.has_flags(mmap_jvm_heap)) {
+                memory::stats::on_jvm_heap_free(size);
+            }
             vma_list.erase(dead);
             delete &dead;
         }
@@ -951,6 +954,17 @@ unsigned vma::perm() const
     return _perm;
 }
 
+void vma::update_flags(unsigned flag)
+{
+    assert(mutex_owned(&vma_list_mutex));
+    _flags |= flag;
+}
+
+bool vma::has_flags(unsigned flag)
+{
+    return _flags & flag;
+}
+
 anon_vma::anon_vma(addr_range range, unsigned perm, unsigned flags)
     : vma(range, perm, flags)
 {
@@ -983,12 +997,16 @@ void anon_vma::fault(uintptr_t addr, exception_frame *ef)
         size = page_size;
     }
 
+    auto total = 0;
     if (_flags & mmap_uninitialized) {
         fill_anon_page_noinit zfill;
-        populate(&zfill, _perm).operate((void*)addr, size);
+        total = populate(&zfill, _perm).operate((void*)addr, size);
     } else {
         fill_anon_page zfill;
-        populate(&zfill, _perm).operate((void*)addr, size);
+        total = populate(&zfill, _perm).operate((void*)addr, size);
+    }
+    if (_flags & mmap_jvm_heap) {
+        memory::stats::on_jvm_heap_alloc(total);
     }
 }
 
@@ -1034,6 +1052,28 @@ void* map_jvm(void* addr, size_t size)
     auto* vma = new mmu::jvm_balloon_vma(start, start + size);
     auto v = (void*) allocate(vma, start, size, false);
     return v;
+}
+
+void mark_jvm_mapping(void* addr)
+{
+    WITH_LOCK(vma_list_mutex) {
+        u64 a = reinterpret_cast<u64>(addr);
+        auto v = vma_list.find(addr_range(a, a+1), vma::addr_compare());
+        // It has to be somewhere!
+        assert(v != vma_list.end());
+        vma *vma = &*v;
+
+        // We will use a protection call to count pages, because that is not
+        // expected to allocate or free anything. So the return value here will
+        // tell us how many pages we have operated on, which is all we have at
+        // this time.
+        if (!vma->has_flags(mmap_jvm_heap)) {
+            protection p(vma->perm());
+            auto mem = p.operate(vma->addr(), vma->size());
+            memory::stats::on_jvm_heap_alloc(mem);
+        }
+        vma->update_flags(mmap_jvm_heap);
+    }
 }
 
 file_vma::file_vma(addr_range range, unsigned perm, fileref file, f_offset offset, bool shared)

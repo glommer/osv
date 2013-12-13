@@ -395,6 +395,7 @@ bi::set<page_range,
 // and eventually hotplug in an hypothetical future
 static size_t _total(0);
 static size_t _free_memory(0);
+static std::atomic<size_t> _jvm_heap_memory(0);
 static size_t _watermark_lo(0);
 static size_t _watermark_desperately_lo(0);
 
@@ -436,6 +437,17 @@ static void on_new_memory(size_t mem)
 namespace stats {
     size_t free() { return _free_memory; }
     size_t total() { return _total; }
+
+    void on_jvm_heap_alloc(size_t mem)
+    {
+        _jvm_heap_memory.fetch_add(mem);
+        assert(_jvm_heap_memory.load() < _total);
+    }
+    void on_jvm_heap_free(size_t mem)
+    {
+        _jvm_heap_memory.fetch_sub(mem);
+    }
+    size_t jvm_heap_memory() { return _jvm_heap_memory.load(); }
 }
 
 void reclaimer::wake(pressure p)

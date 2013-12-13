@@ -71,6 +71,7 @@ enum {
     mmap_populate    = 1ul << 1,
     mmap_shared      = 1ul << 2,
     mmap_uninitialized = 1ul << 3,
+    mmap_jvm_heap    = 1ul << 4,
 };
 
 class vma {
@@ -87,6 +88,8 @@ public:
     virtual void fault(uintptr_t addr, exception_frame *ef) = 0;
     virtual void split(uintptr_t edge) = 0;
     virtual error sync(uintptr_t start, uintptr_t end) = 0;
+    void update_flags(unsigned flag);
+    bool has_flags(unsigned flag);
     class addr_compare;
 protected:
     addr_range _range;
@@ -142,6 +145,7 @@ void* map_file(void* addr, size_t size, unsigned flags, unsigned perm,
               fileref file, f_offset offset);
 void* map_anon(void* addr, size_t size, unsigned flags, unsigned perm);
 void* map_jvm(void* addr, size_t size);
+void mark_jvm_mapping(void* addr);
 
 void unmap(void* addr, size_t size);
 int protect(void *addr, size_t size, unsigned int perm);

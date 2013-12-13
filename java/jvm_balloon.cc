@@ -28,7 +28,7 @@ public:
     unsigned char *end;
 };
 
-static constexpr unsigned flags = mmu::mmap_fixed | mmu::mmap_uninitialized;
+static constexpr unsigned flags = mmu::mmap_fixed | mmu::mmap_uninitialized | mmu::mmap_jvm_heap;
 static constexpr unsigned perms = mmu::perm_read | mmu::perm_write;
 
 class balloon {
@@ -87,6 +87,7 @@ void balloon::empty_area()
 
     _hole_size = end - _addr;
 
+    mmu::mark_jvm_mapping(_addr);
     mmu::map_jvm(_addr, _hole_size);
     balloons.insert(*this);
 }
@@ -129,7 +130,8 @@ size_t balloon::move_balloon(unsigned char *dest, unsigned char *src)
     // touched, we need not to worry about memory shortages. It is simpler to
     // do this rather than the other way around because then in case part of
     // the new balloon falls within this area, the vma->split() code will take
-    // care of arrange things for us.
+    // care of arrange things for us. Note that this area will be always marked
+    // as a jvm heap address.
     mmu::map_anon(_addr, _hole_size, flags, perms);
     empty_area();
     return end - dest;

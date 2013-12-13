@@ -165,6 +165,9 @@ private:
 namespace stats {
     size_t free();
     size_t total();
+    size_t jvm_heap_memory();
+    void on_jvm_heap_alloc(size_t mem);
+    void on_jvm_heap_free(size_t mem);
 }
 }
 
