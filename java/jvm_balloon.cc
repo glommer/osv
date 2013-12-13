@@ -42,6 +42,10 @@ public:
 
     unsigned char *start;
     unsigned char *end;
+    // Whether or not it can be released by release_memory.
+    // The initial balloon is internal to our implementation and
+    // cannot.
+    bool can_release() { return _balloon_size == balloon_size; }
 private:
     unsigned char *_jvm_addr;
     unsigned char *_addr;
@@ -211,22 +215,24 @@ size_t jvm_balloon_shrinker::release_memory(size_t size)
     int status = _attach(&env);
 
     size_t ret = 0;
-    do {
-        WITH_LOCK(balloons_lock) {
-            if (balloons.empty()) {
-                break; // No more balloons to release
+    WITH_LOCK(balloons_lock) {
+        for (auto& b : balloons) {
+            if (!b.can_release()) {
+                continue;
             }
 
-            ret += balloon_size;
-            auto b = &*balloons.begin();
-            b->release(env);
-            delete b;
+            b.release(env);
+            delete &b;
             // It might be that this shrinker was disabled due to excessive memory
             // pressure, so we must take care to activate it. This should be a nop
             // if the shrinker is already active, so do it always.
             activate_shrinker();
+            ret += balloon_size;
+            if (ret > size) {
+                break;
+            }
         }
-    } while (ret < size);
+    }
 
     _detach(status);
     return ret;
@@ -276,6 +282,19 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
 {
     JNIEnv *env = NULL;
     int status = _attach(&env);
+
+    jbyteArray array = env->NewByteArray(mmu::page_size << 1);
+    jthrowable exc = env->ExceptionOccurred();
+    assert(!exc);
+
+    jboolean iscopy;
+    auto p = env->GetPrimitiveArrayCritical(array, &iscopy);
+    // FIXME: If the copy is still guaranteed to be in the heap, we
+    // can use it.
+    assert(!iscopy);
+    jobject jref = env->NewGlobalRef(array);
+    new balloon(static_cast<unsigned char *>(p), jref, mmu::page_size, mmu::page_size << 1);
+    env->ReleasePrimitiveArrayCritical(array, p, 0);
 
     auto monitor = env->FindClass("io/osv/OSvGCMonitor");
     if (!monitor) {
