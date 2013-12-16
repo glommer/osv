@@ -21,6 +21,8 @@ private:
     JavaVM *_vm;
     int _attach(JNIEnv **env);
     void _detach(int status);
+    // FIXME: It can grow, but we will ignore it for now.
+    size_t _total_heap;
 };
 
 void jvm_balloon_fault(exception_frame *ef);

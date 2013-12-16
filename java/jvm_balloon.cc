@@ -171,7 +171,25 @@ size_t jvm_balloon_shrinker::request_memory(size_t size)
     size_t ret = 0;
     int status = _attach(&env);
 
+    // It is unfortunate that we need to evaluate those every time, but the JNI
+    // functions are associated with a particular env pointer. So if we reuse
+    // any of those values, they will be invalid in the next invocation. The
+    // whole thing takes around 30 ms though, so it should be fine.
+    auto rtclass = env->FindClass("java/lang/Runtime");
+    auto rt = env->GetStaticMethodID(rtclass , "getRuntime", "()Ljava/lang/Runtime;");
+    auto rtinst = env->CallStaticObjectMethod(rtclass, rt);
+    auto free_memory  = env->GetMethodID(rtclass, "freeMemory", "()J");
+
     do {
+        size_t free = env->CallLongMethod(rtinst, free_memory);
+        if ((memory::stats::jvm_heap_memory() * 100) / memory::stats::total()  > 90) {
+            deactivate_shrinker();
+            return 0;
+        } else if ((free < balloon_size) || ((free * 100) / _total_heap) < 20) {
+            deactivate_shrinker();
+            return 0;
+        }
+
         jbyteArray array = env->NewByteArray(balloon_size);
         jthrowable exc = env->ExceptionOccurred();
         if (exc) {
@@ -300,6 +318,12 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
     if (!monitor) {
         debug("java.so: Can't find monitor class\n");
     }
+
+    auto rtclass = env->FindClass("java/lang/Runtime");
+    auto rt = env->GetStaticMethodID(rtclass , "getRuntime", "()Ljava/lang/Runtime;");
+    auto rtinst = env->CallStaticObjectMethod(rtclass, rt);
+    auto total_memory = env->GetMethodID(rtclass, "totalMemory", "()J");
+    _total_heap = env->CallLongMethod(rtinst, total_memory);
 
     auto monmethod = env->GetStaticMethodID(monitor, "MonitorGC", "(J)V");
     env->CallStaticVoidMethod(monitor, monmethod, this);
