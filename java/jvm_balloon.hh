@@ -18,6 +18,7 @@ public:
     explicit jvm_balloon_shrinker(JavaVM *vm);
     virtual size_t request_memory(size_t s);
     virtual size_t release_memory(size_t s);
+    virtual bool can_have_waiters() { return false; }
 private:
     JavaVM *_vm;
     int _attach(JNIEnv **env);

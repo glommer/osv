@@ -529,6 +529,12 @@ void reclaimer::wait_for_memory(size_t mem)
         return;
     }
 
+    // This is the same situation as if we already have a waiting.  We could
+    // block forever and deadlock
+    if (_currently_shrinking && _currently_shrinking->can_have_waiters()) {
+        oom();
+    }
+
     _oom_blocked.wait(mem);
 }
 
@@ -575,6 +581,15 @@ void shrinker::activate_shrinker()
 {
     reclaimer_thread._active_shrinkers += !_enabled;
     _enabled = 1;
+}
+
+bool shrinker::should_shrink(ssize_t target)
+{
+    bool waiters = reclaimer_thread._oom_blocked.has_waiters();
+    if (!can_have_waiters() && waiters) {
+        return false;
+    }
+    return _enabled && (target > 0);
 }
 
 shrinker::shrinker(std::string name)

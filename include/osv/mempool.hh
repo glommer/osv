@@ -112,7 +112,8 @@ public:
     virtual size_t release_memory(size_t n) = 0;
     std::string name() { return _name; };
 
-    bool should_shrink(ssize_t target) { return _enabled && (target > 0); }
+    bool should_shrink(ssize_t target);
+    virtual bool can_have_waiters() { return true; }
 
     void deactivate_shrinker();
     void activate_shrinker();
