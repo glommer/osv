@@ -75,6 +75,7 @@ enum {
     mmap_shared      = 1ul << 2,
     mmap_uninitialized = 1ul << 3,
     mmap_jvm_heap    = 1ul << 4,
+    mmap_jvm_balloon = 1ul << 5,
 };
 
 struct map_page_ops;
@@ -145,16 +146,22 @@ private:
     bool _shared;
 };
 
+ulong map_jvm(unsigned char* addr, size_t size, size_t align, balloon *b);
+
 class jvm_balloon_vma : public vma {
 public:
-    jvm_balloon_vma(uintptr_t start, uintptr_t end, balloon *b, unsigned perm, unsigned flags);
+    jvm_balloon_vma(unsigned char *jvm_addr, uintptr_t start, uintptr_t end, balloon *b, unsigned perm, unsigned flags);
     virtual ~jvm_balloon_vma();
     virtual void split(uintptr_t edge) override;
     virtual error sync(uintptr_t start, uintptr_t end) override;
     virtual void fault(uintptr_t addr, exception_frame *ef) override;
     void detach_balloon();
-private:
+    unsigned char *jvm_addr() { return _jvm_addr; }
+    friend ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon *b);
+protected:
     balloon *_balloon;
+    unsigned char *_jvm_addr;
+private:
     unsigned _real_perm;
     unsigned _real_flags;
 };
@@ -162,7 +169,6 @@ private:
 void* map_file(void* addr, size_t size, unsigned flags, unsigned perm,
               fileref file, f_offset offset);
 void* map_anon(void* addr, size_t size, unsigned flags, unsigned perm);
-ulong map_jvm(void* addr, size_t size, balloon *b);
 
 error munmap(void* addr, size_t size);
 error mprotect(void *addr, size_t size, unsigned int perm);
