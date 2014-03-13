@@ -12,6 +12,8 @@
 #include "jvm_balloon.hh"
 #include <osv/mempool.hh>
 
+extern size_t jvm_heap_size;
+
 // java.so is similar to the standard "java" command line launcher in Linux.
 //
 // This program does very little - basically it starts the JVM and asks it
@@ -121,6 +123,7 @@ int main(int argc, char **argv)
             options.push_back(mkoption("-Xms%dM", auto_heap));
         }
         auto_heap <<= 20;
+        jvm_heap_size = auto_heap;
     }
 
     vm_args.nOptions = options.size();
@@ -139,6 +142,7 @@ int main(int argc, char **argv)
         std::cerr << "java.so: Can't create VM.\n";
         return 1;
     }
+    jvm_heap_size = 0;
 
     auto mainclass = env->FindClass(RUNJAVA);
     if (!mainclass) {
