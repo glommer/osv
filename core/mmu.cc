@@ -855,6 +855,18 @@ ulong evacuate(uintptr_t start, uintptr_t end)
     // FIXME: range also indicates where we can insert a new anon_vma, use it
 }
 
+template<account_opt Account = account_opt::no>
+ulong populate_vma(vma *vma, void *v, size_t size)
+{
+    page_allocator *map = vma->page_ops();
+    auto total = vma->has_flags(mmap_small) ?
+        vma->operate_range(populate_small<Account>(map, vma->perm(), vma->map_dirty()), v, size) :
+        vma->operate_range(populate<Account>(map, vma->perm(), vma->map_dirty()), v, size);
+    map->finalize();
+
+    return total;
+}
+
 static void unmap(const void* addr, size_t size)
 {
     size = align_up(size, mmu::page_size);
@@ -910,6 +922,43 @@ private:
         return addr;
     }
 };
+
+// Maps the same page in an arbitrary vma that will eventually replace the JVM vma, and
+// in the JVM vma itself. See jvm_balloon_vma::add_partial for more info.
+class jvm_balloon_page_copier : public page_allocator {
+private:
+    jvm_balloon_vma *_vma;
+    anon_vma *_target_vma;
+    page_allocator *_target_pops;
+public:
+    virtual void* alloc(uintptr_t offset) override {
+        auto vaddr = reinterpret_cast<void *>(_target_vma->start() + offset);
+        populate_vma(_target_vma, vaddr, page_size);
+        return phys_to_virt(virt_to_phys_pt(vaddr));
+    }
+    virtual void* alloc(size_t size, uintptr_t offset) override {
+        // FIXME : Try to map the original worker with a huge page, and try to
+        // see if we succeed. Using a huge page is harder than it seems,
+        // because the JVM is not guaranteed to copy objects in huge page
+        // increments - and it usually won't.  If we go ahead and map a huge
+        // page subsequent copies *from* this location will not fault and we
+        // will lose track of the partial copy count.
+        return nullptr;
+    }
+    virtual void free(void *addr, uintptr_t offset) override {
+        abort();
+    }
+    virtual void free(void *addr, size_t size, uintptr_t offset) override {
+        abort();
+    }
+
+    virtual void finalize() override {
+    }
+
+    jvm_balloon_page_copier(jvm_balloon_vma *vma, anon_vma *tmp_vma) :
+        _vma(vma), _target_vma(tmp_vma), _target_pops(tmp_vma->page_ops()) {}
+};
+
 
 class map_file_page_read : public uninitialized_anonymous_page_provider {
 private:
@@ -1040,18 +1089,6 @@ void vcleanup(void* addr, size_t size)
         map_range(reinterpret_cast<uintptr_t>(addr), reinterpret_cast<uintptr_t>(addr), size,
                 cleaner, huge_page_size);
     }
-}
-
-template<account_opt Account = account_opt::no>
-ulong populate_vma(vma *vma, void *v, size_t size)
-{
-    page_allocator *map = vma->page_ops();
-    auto total = vma->has_flags(mmap_small) ?
-        vma->operate_range(populate_small<Account>(map, vma->perm(), vma->map_dirty()), v, size) :
-        vma->operate_range(populate<Account>(map, vma->perm(), vma->map_dirty()), v, size);
-    map->finalize();
-
-    return total;
 }
 
 TRACEPOINT(trace_mmu_invalidate, "addr=%p, vaddr=%p", void *, uintptr_t);
@@ -1339,6 +1376,67 @@ jvm_balloon_vma::jvm_balloon_vma(unsigned char *jvm_addr, uintptr_t start,
 {
 }
 
+// IMPORTANT: This code assumes that opportunistic copying never happens during
+// partial copying.  In general, this assumption is wrong. There is nothing
+// that prevents the JVM from doing both at the same time from the same object.
+// However, hotspot seems not to do it, which simplifies a lot our code.
+//
+// If that assumption fails to hold in some real life scenario (be it a hotspot
+// corner case or another JVM), the assertion eff == _effective_jvm_addr will
+// crash us and we will find it out.  If we need it, it is not impossible to
+// handle this case: all we have to do is create a list of effective addresses
+// and keep the partial counts independently. But not only the code bellow
+// would be more complicated, the page copier would be consierably more so.
+//
+//
+// Explanation about partial copy:
+//
+// There are situations during which some Garbage Collectors will copy a large
+// object in parallel, using various threads, each being responsible for a part
+// of the object.
+//
+// If that happens, the simple balloon move algorithm will break. However,
+// because offset 'x' in the source will always be copied to offset 'x' in the
+// destination, we can still calculate the final destination object. This
+// address is the _effective_jvm_addr in the code bellow.
+//
+// The problem is that we cannot open the new balloon yet. Since the JVM
+// believes it is copying only a part of the object, the destination may (and
+// usually will) contain valid objects, that need to be themselves moved
+// somewhere else before we can install our object there.
+//
+// Also, we can't close the object fully when someone writes to it: because a
+// part of the object is now already freed, the JVM may and will go ahead and
+// copy another object to this location. To handle this case, we need two
+// pieces of data:
+//
+// 1) _partial_copy is a variable that keeps track of how much data has being
+// copied from this location to somewhere else. Because we know that the JVM
+// has to copy the whole object, when that counter reaches the amount of bytes
+// we expect in this vma, this means we can close this object (assuming no
+// opportunistic copy)
+//
+// 2) _partial_vma holds a new vma at an arbitrary location where we are going
+// to relay all our writes to. When we are finished with the balloon, we can
+// install this vma in place of the old jvm vma. For that to work, we will use
+// the jvm_balloon_page_copier allocator: it maps the same page in the
+// candidate vma, and in our current vma.
+bool jvm_balloon_vma::add_partial(size_t partial, unsigned char *eff)
+{
+    if (_effective_jvm_addr) {
+        assert(eff == _effective_jvm_addr);
+    } else {
+        _partial_vma = new mmu::anon_vma(addr_range(0, 0), _real_perm, _real_flags);
+        _partial_addr = allocate(_partial_vma, start(), size(), true);
+
+        _effective_jvm_addr= eff;
+        _page_ops = new jvm_balloon_page_copier(this, _partial_vma);
+    }
+
+    _partial_copy += partial;
+    return _partial_copy == size();
+}
+
 void jvm_balloon_vma::split(uintptr_t edge)
 {
     auto end = _range.end();
@@ -1358,7 +1456,12 @@ error jvm_balloon_vma::sync(uintptr_t start, uintptr_t end)
 void jvm_balloon_vma::fault(uintptr_t fault_addr, exception_frame *ef)
 {
     std::lock_guard<mutex> guard(vma_list_mutex);
-    jvm_balloon_fault(_balloon, ef, this);
+    if (jvm_balloon_fault(_balloon, ef, this)) {
+        return;
+    }
+    assert(_effective_jvm_addr);
+    // FIXME: try a huge page. See jvm_balloon_page_copier for why this is hard
+    populate_vma<>(this, (void*)fault_addr, page_size);
 }
 
 jvm_balloon_vma::~jvm_balloon_vma()
@@ -1368,7 +1471,19 @@ jvm_balloon_vma::~jvm_balloon_vma()
     // out.
     vma_list.erase(*this);
     assert(!(_real_flags & mmap_jvm_balloon));
-    mmu::map_anon(addr(), size(), _real_flags, _real_perm);
+    if (_effective_jvm_addr) {
+
+        vma_list.erase(*_partial_vma);
+        _partial_vma->set(start(), end());
+        vma_list.insert(*_partial_vma);
+        // Can't just use size(), because although rare, the source and destination can
+        // have different alignments
+        auto end = ::align_down(_effective_jvm_addr + balloon_size, balloon_alignment);
+        auto s = end - ::align_up(_effective_jvm_addr, balloon_alignment);
+        mmu::map_jvm(_effective_jvm_addr, s, mmu::huge_page_size, _balloon);
+    } else {
+        mmu::map_anon(addr(), size(), _real_flags, _real_perm);
+    }
 }
 
 ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon_ptr b)
@@ -1383,6 +1498,9 @@ ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon_ptr b)
         // It has to be somewhere!
         assert(v != &*vma_list.end());
         assert(v->has_flags(mmap_jvm_heap) | v->has_flags(mmap_jvm_balloon));
+        if (v->has_flags(mmap_jvm_balloon) && (v->addr() == addr)) {
+            return 0;
+        }
     }
 
     auto* vma = new mmu::jvm_balloon_vma(jvm_addr, start, start + size, b, v->perm(), v->flags());
