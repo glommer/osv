@@ -1499,6 +1499,10 @@ ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon_ptr b)
         assert(v != &*vma_list.end());
         assert(v->has_flags(mmap_jvm_heap) | v->has_flags(mmap_jvm_balloon));
         if (v->has_flags(mmap_jvm_balloon) && (v->addr() == addr)) {
+            jvm_balloon_vma *j = static_cast<jvm_balloon_vma *>(&*v);
+            if (&*j->_balloon != &*b) {
+                j->_balloon = b;
+            }
             return 0;
         }
     }
