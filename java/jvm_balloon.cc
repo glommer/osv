@@ -13,6 +13,9 @@
 #include <unordered_map>
 #include <thread>
 
+TRACEPOINT(trace_jvm_balloon_new, "obj=%p, aligned %p, size %d, vma_size %d",
+        const unsigned char *, const unsigned char *, size_t, size_t);
+TRACEPOINT(trace_jvm_balloon_free, "");
 TRACEPOINT(trace_jvm_balloon_fault, "from=%p, to=%p, size %d, vma_size %d",
         const unsigned char *, const unsigned char *, size_t, size_t);
 TRACEPOINT(trace_jvm_balloon_move, "new_jvm_addr=%p, new_jvm_end=%p, new_addr %p, new_end %p",
@@ -96,6 +99,7 @@ ulong balloon::empty_area(balloon_ptr b)
     balloons.push_back(b);
     auto ret = mmu::map_jvm(_jvm_addr, end - addr, _alignment, b);
     memory::reserve_jvm_heap(minimum_size());
+    trace_jvm_balloon_new(_jvm_addr, addr, end - addr, ret);
     return ret;
 }
 
@@ -118,6 +122,7 @@ void balloon::release(JNIEnv *env)
     // No need to remap. Will happen automatically when JVM touches it again
     env->DeleteGlobalRef(_jref);
     memory::return_jvm_heap(minimum_size());
+    trace_jvm_balloon_free();
 }
 
 unsigned char *
