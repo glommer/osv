@@ -20,6 +20,26 @@ public class Reclaim {
         jvm.set_fs(fs);
         fs.set_jvm(jvm);
 
+        jvm.alloc(95 * memory / 100);
+        jvm.free_all();
+        System.gc();
+        System.out.println("Free Heap: " + Runtime.getRuntime().freeMemory());
+
+        //System.out.println("Starting Warmup\n");
+        //fs.warmup();
+        //System.out.println("Warmup Done\n");
+
+//        try {
+//            Thread.sleep(4000);
+//        } catch (InterruptedException e) {
+//        }
+
+        //System.out.println("Allocating 90 %...");
+        //jvm.alloc(9 * memory / 10);
+        //System.out.println("Reading back 90 %...");
+        //fs.read(9 * memory / 10);
+
+
         for (int i = 1; i < 10; i++) {
             System.out.println("Iteration number " + i);
             jvm.alloc(i * memory / 10);

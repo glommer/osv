@@ -43,6 +43,12 @@ public class JVMConsumer {
         createBuffers(bytes / page);
     }
 
+    public void free_all() {
+        while (!BList.isEmpty()) {
+            BList.remove(0);
+        }
+    }
+
     public void set_fs(FSConsumer fs)
     {
         _Fs = fs;

@@ -30,6 +30,48 @@ public class FSConsumer {
         }
     }
 
+    public void warmup() {
+        System.out.println("Starting warmup file");
+
+        FileChannel channel;
+        try {
+            file.setLength(2l << 30);
+            channel = file.getChannel();
+            channel.position(0);
+
+            while (channel.position() < file.length()) {
+                ByteBuffer buf = ByteBuffer.allocate(4 << 10);
+                buf.putLong(channel.position());
+                channel.write(buf);
+            }
+
+        } catch (IOException x) {
+            System.err.format("Error setting up channel for file: %s%n", x);
+            return;
+        }
+    }
+
+    public void read(long bytes) {
+        try {
+            long size = file.length();
+
+            FileChannel channel;
+            channel = file.getChannel();
+            channel.position(0);
+
+            // Make sure the ARC is stressed. Not all writes will.
+            while (channel.position() < bytes) {
+                ByteBuffer buf = ByteBuffer.allocate(4 << 10);
+                channel.read(buf);
+            }
+        } catch (IOException x) {
+            System.err.format("Error closing file: %s%n", x);
+            return;
+        }
+
+        System.out.println("\nFILE Read\n");
+    }
+
     public void consume_buffers() {
 
         System.out.println("Consuming " + BList.size() + " buffers...");
