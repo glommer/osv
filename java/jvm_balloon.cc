@@ -306,6 +306,8 @@ bool jvm_balloon_fault(balloon_ptr b, exception_frame *ef, mmu::jvm_balloon_vma 
 
     trace_jvm_balloon_fault(src, dest, size, vma->size());
 
+    assert(vma->size() >= b->minimum_size());
+
     auto skip = size;
     if (size < vma->size()) {
         unsigned char *base = static_cast<unsigned char *>(vma->addr());

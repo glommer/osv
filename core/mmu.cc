@@ -1439,13 +1439,7 @@ bool jvm_balloon_vma::add_partial(size_t partial, unsigned char *eff)
 
 void jvm_balloon_vma::split(uintptr_t edge)
 {
-    auto end = _range.end();
-    if (edge <= _range.start() || edge >= end) {
-        return;
-    }
-    auto * n = new jvm_balloon_vma(_jvm_addr, edge, end, _balloon, _real_perm, _real_flags);
-    _range = addr_range(_range.start(), edge);
-    vma_list.insert(*n);
+    abort();
 }
 
 error jvm_balloon_vma::sync(uintptr_t start, uintptr_t end)
@@ -1493,6 +1487,7 @@ ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon_ptr b)
 
     vma* v;
     WITH_LOCK(vma_list_mutex) {
+
         u64 a = reinterpret_cast<u64>(addr);
         v = &*vma_list.find(addr_range(a, a+1), vma::addr_compare());
         // It has to be somewhere!
@@ -1516,13 +1511,35 @@ ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon_ptr b)
         // now the finishing code would have to deal with the case where the
         // bounds found in the vma are not the real bounds. We delete it right
         // away and avoid it altogether.
-        if (v->has_flags(mmap_jvm_balloon)) {
-            // Finish the move. In practice, it will temporarily remap an anon mapping
-            // here, but this should be rare. Let's not complicate the code to optimize
-            // it. There are no guarantees that we are talking about the same balloon
-            // If this is the old balloon
-            delete v;
+        addr_range r(start, start + size);
+        auto range = vma_list.equal_range(r, vma::addr_compare());
+
+        for (auto i = range.first; i != range.second; ++i) {
+            if (i->has_flags(mmap_jvm_balloon)) {
+                auto& v = *i--;
+                // If there is an effective address this means this is a
+                // partial copy.  We cannot close it here because the copy is
+                // still ongoing. However, splitting will crush the partial
+                // size calculation, so we have to abort.
+                //
+                // FIXME: This is solvable by reducing the size of the vma and
+                // keeping track of the original size. Still, we can't really
+                // call the split code directly because that will delete the
+                // vma and cause its termination
+                if (v.start() != start) {
+                    assert(((jvm_balloon_vma *)&v)->effective_jvm_addr() == nullptr);
+                }
+
+                vma_list.erase(v);
+                // Finish the move. In practice, it will temporarily remap an
+                // anon mapping here, but this should be rare. Let's not
+                // complicate the code to optimize it. There are no
+                // guarantees that we are talking about the same balloon If
+                // this is the old balloon
+                delete &v;
+            }
         }
+
         evacuate(start, start + size);
         vma_list.insert(*vma);
         return vma->size();
