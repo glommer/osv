@@ -211,6 +211,20 @@ void jvm_balloon_shrinker::_detach(int status)
     }
 }
 
+void jvm_balloon_shrinker::request_memory2(JNIEnv *env)
+{
+        jbyteArray array = env->NewByteArray(balloon_size);
+
+        jthrowable exc = env->ExceptionOccurred();
+        if (exc) {
+            env->ExceptionClear();
+            printf("EXCEPTION!!!\n");
+            return;
+        }
+        env->NewGlobalRef(array);
+        env->DeleteLocalRef(array);
+}
+
 size_t jvm_balloon_shrinker::_request_memory(JNIEnv *env, size_t size)
 {
     size_t ret = 0;
@@ -278,6 +292,14 @@ void jvm_balloon_shrinker::_thread_loop()
     _thread->set_priority(0.001);
 
     thread_mark_emergency();
+
+    for (int i = 0; i < 12; i++) {
+        request_memory2(env);
+    }
+
+    WITH_LOCK(balloons_lock) {
+        _blocked.wait_until(balloons_lock, [&] { return 0; });
+    }
 
     while (true) {
         WITH_LOCK(balloons_lock) {
