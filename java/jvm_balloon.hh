@@ -31,6 +31,7 @@ constexpr size_t balloon_alignment = mmu::huge_page_size;
 class jvm_balloon_shrinker {
 public:
     explicit jvm_balloon_shrinker(JavaVM *vm);
+    void request_memory2(JNIEnv *env);
     void request_memory(size_t s) { _pending.fetch_add(s); _blocked.wake_one(); }
     void release_memory(size_t s) { _pending_release.fetch_add(s); _blocked.wake_one(); }
     bool ballooning() { return _pending.load() > 0; }

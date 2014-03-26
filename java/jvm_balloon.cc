@@ -207,6 +207,20 @@ void jvm_balloon_shrinker::_detach(int status)
     }
 }
 
+void jvm_balloon_shrinker::request_memory2(JNIEnv *env)
+{
+        jbyteArray array = env->NewByteArray(balloon_size);
+
+        jthrowable exc = env->ExceptionOccurred();
+        if (exc) {
+            env->ExceptionClear();
+            printf("EXCEPTION!!!\n");
+            return;
+        }
+        env->NewGlobalRef(array);
+        env->DeleteLocalRef(array);
+}
+
 size_t jvm_balloon_shrinker::_request_memory(JNIEnv *env, size_t size)
 {
     size_t ret = 0;
@@ -421,6 +435,10 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
         abort();
     }
 
+    for (int i = 0; i < 11; i++) {
+        request_memory2(env);
+    }
+
     _detach(status);
 
     balloon_shrinker = this;
@@ -431,6 +449,8 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
     // std::thread is implemented ontop of pthreads, so it is fine
     std::thread tmp([=] { _thread_loop(); });
     tmp.detach();
+
+    request_memory(128 << 20);
 }
 
 jvm_balloon_shrinker::~jvm_balloon_shrinker()
