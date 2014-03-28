@@ -2338,6 +2338,9 @@ arc_shrink(void)
 
 static int needfree = 0;
 
+extern size_t debug_arc_jvm();
+extern size_t debug_arc_jvm2();
+
 static int
 arc_reclaim_needed(void)
 {
@@ -2458,6 +2461,16 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat)
 }
 
 static void
+arc_fuck(void *dummy __unused2)
+{
+    while (1) {
+        printf("ARC size: %d Mb (Max %d Mb), kmem used %d Mb out of %d Mb, JVM %d Mb, Heap touched %ld Mb\n",
+                arc_size >> 20, arc_c >> 20, kmem_used() >> 20, kmem_size() >> 20, debug_arc_jvm() >> 20, debug_arc_jvm2() >> 20);
+        bsd_pause("zfs:fuck", ns2ticks(1000000000));
+    }
+}
+
+static void
 arc_reclaim_thread(void *dummy __unused2)
 {
 	clock_t			growtime = 0;
@@ -2472,12 +2485,14 @@ arc_reclaim_thread(void *dummy __unused2)
 
 			if (arc_no_grow) {
 				if (last_reclaim == ARC_RECLAIM_CONS) {
+                    printf("becoming aggr 1\n");
 					last_reclaim = ARC_RECLAIM_AGGR;
 				} else {
 					last_reclaim = ARC_RECLAIM_CONS;
 				}
 			} else {
 				arc_no_grow = TRUE;
+                printf("becoming aggr 2\n");
 				last_reclaim = ARC_RECLAIM_AGGR;
 				membar_producer();
 			}
@@ -2486,6 +2501,8 @@ arc_reclaim_thread(void *dummy __unused2)
 			growtime = ddi_get_lbolt() + (arc_grow_retry * hz);
 
 			if (needfree && last_reclaim == ARC_RECLAIM_CONS) {
+
+                printf("becoming aggr RECL\n");
 				/*
 				 * If needfree is TRUE our vm_lowmem hook
 				 * was called and in that case we must free some
@@ -2494,6 +2511,7 @@ arc_reclaim_thread(void *dummy __unused2)
 				arc_no_grow = TRUE;
 				last_reclaim = ARC_RECLAIM_AGGR;
 			}
+            printf("reaper!\n");
 			arc_kmem_reap_now(last_reclaim);
 			arc_warm = B_TRUE;
 
@@ -2508,6 +2526,7 @@ arc_reclaim_thread(void *dummy __unused2)
 
 #ifdef _KERNEL
 		if (needfree) {
+            printf("clear needfree\n");
 			needfree = 0;
 			wakeup(&needfree);
 		}
@@ -3880,6 +3899,7 @@ arc_lowmem(void *arg __unused2, int howto __unused2)
 	 * with ARC reclaim thread.
 	 */
 	if (curproc == pageproc) {
+        printf("curproc , pageproc??\n");
 		while (needfree)
 			msleep(&needfree, &arc_reclaim_thr_lock, 0, "zfs:lowmem", 0);
 	}
@@ -3891,6 +3911,8 @@ arc_lowmem(void *arg __unused2, int howto __unused2)
 	}
 	mutex_exit(&arc_reclaim_thr_lock);
 	mutex_exit(&arc_lowmem_lock);
+
+    printf("Freed?? %d\n" , freed);
 
 	return freed;
 }
@@ -4025,6 +4047,8 @@ arc_init(void)
 
 	(void) thread_create(NULL, 0, arc_reclaim_thread, NULL, 0, &p0,
 	    TS_RUN, minclsyspri);
+
+	(void) thread_create(NULL, 0, arc_fuck, NULL, 0, &p0, TS_RUN, minclsyspri);
 
 #ifdef _KERNEL
 	arc_event_lowmem = EVENTHANDLER_REGISTER(vm_lowmem, arc_lowmem, NULL,

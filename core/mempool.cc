@@ -1337,3 +1337,13 @@ void free_phys_contiguous_aligned(void* p)
 }
 
 }
+
+extern "C" size_t debug_arc_jvm()
+{
+    return memory::jvm_heap_reserved();
+}
+
+extern "C" size_t debug_arc_jvm2()
+{
+    return memory::stats::jvm_heap();
+}
