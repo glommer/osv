@@ -540,6 +540,7 @@ void reclaimer::wait_for_minimum_memory()
 // memory, there is very little hope and we would might as well give up.
 void reclaimer::wait_for_memory(size_t mem)
 {
+    printf("SLEEPING 'T. Reservation: %d. Wait : %ld Kb\n", jvm_heap_reserved(), mem >> 10);
     trace_memory_wait(mem);
     _oom_blocked.wait(mem);
 }
@@ -612,6 +613,7 @@ bool reclaimer_waiters::wake_waiters()
         // We expect less waiters than page ranges so the inner loop is one
         // of waiters. But we cut the whole thing short if we're out of them.
         if (_waiters.empty()) {
+            printf("Woke a bitch\n");
             return true;
         }
 
@@ -620,11 +622,13 @@ bool reclaimer_waiters::wake_waiters()
             auto& wr = *it;
             it++;
 
+            //printf("Trying waiter for %d bytes. In this: %d\n", wr.bytes, in_this_page_range);
             if (in_this_page_range >= wr.bytes) {
                 in_this_page_range -= wr.bytes;
                 _waiters.erase(_waiters.iterator_to(wr));
                 wr.owner->wake();
                 wr.owner = nullptr;
+                printf("found a shitter to wake\n");
                 woken = true;
             }
         }
