@@ -394,7 +394,7 @@ def permstr(perm):
     return bits2str(perm, ['r', 'w', 'x'])
 
 def flagstr(flags):
-    return bits2str(flags, ['f', 'p', 's', 'u', 'j'])
+    return bits2str(flags, ['f', 'p', 's', 'u', 'j', 'm'])
 
 class osv_mmap(gdb.Command):
     def __init__(self):
