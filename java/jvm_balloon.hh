@@ -33,8 +33,10 @@ public:
     explicit jvm_balloon_shrinker(JavaVM *vm);
     void request_memory2(JNIEnv *env);
     void request_memory(size_t s) { _pending.fetch_add(s); _blocked.wake_one(); }
-    void release_memory(size_t s) { _pending_release.fetch_add(s); _blocked.wake_one(); }
+ //   void release_memory(size_t s) { _pending_release.fetch_add(s); _blocked.wake_one(); }
+    void release_memory(size_t s) {}
     bool ballooning() { return _pending.load() > 0; }
+    void fuck(JNIEnv *env);
     virtual ~jvm_balloon_shrinker();
 private:
     void _release_memory(JNIEnv *env, size_t s);

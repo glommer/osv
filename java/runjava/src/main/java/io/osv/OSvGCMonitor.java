@@ -41,9 +41,11 @@ public class OSvGCMonitor {
                             long free = Runtime.getRuntime().freeMemory();
                             long total = Runtime.getRuntime().totalMemory();
                             long qty = (15 * total) - (free * 100);
-                            if (qty > 0) {
-                                NotifyOSv(handle, qty);
-                            }
+                            NotifyOSv(handle, qty);
+
+                     //       if (qty > 0) {
+                     //           NotifyOSv(handle, qty);
+                     //       }
                         }
                     }
                 };

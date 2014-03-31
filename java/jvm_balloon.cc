@@ -132,8 +132,9 @@ ulong balloon::empty_area(balloon_ptr b)
     auto end = align_down(jvm_end_addr, _alignment);
 
     balloons.push_back(b);
-    auto ret = mmu::map_jvm(_jvm_addr, end - addr, _alignment, b);
-    memory::reserve_jvm_heap(minimum_size());
+    auto ret = 128 << 20;
+//    auto ret = mmu::map_jvm(_jvm_addr, end - addr, _alignment, b);
+//    memory::reserve_jvm_heap(minimum_size());
     trace_jvm_balloon_new(_jvm_addr, addr, end - addr, ret);
     return ret;
 }
@@ -221,6 +222,20 @@ void jvm_balloon_shrinker::request_memory2(JNIEnv *env)
         env->DeleteLocalRef(array);
 }
 
+jbyteArray arrays[32];
+int idx_arrays = 0;
+
+void jvm_balloon_shrinker::fuck(JNIEnv *env)
+{
+    for (int i = 0; i < idx_arrays; ++i) {
+        jbyteArray array = arrays[i];
+        jboolean iscopy=0;
+        auto p = env->GetPrimitiveArrayCritical(array, &iscopy);
+        printf("\t\tARRAY %d/%d, ADDRESS %p, ALIGNED %p, copy ? %d. balloons %d\n", i, idx_arrays, p, ::align_up(p, 2ul << 20), iscopy, balloons.size());
+        env->ReleasePrimitiveArrayCritical(array, p, 0);
+    }
+}
+
 size_t jvm_balloon_shrinker::_request_memory(JNIEnv *env, size_t size)
 {
     size_t ret = 0;
@@ -235,6 +250,10 @@ size_t jvm_balloon_shrinker::_request_memory(JNIEnv *env, size_t size)
 
         jboolean iscopy=0;
         auto p = env->GetPrimitiveArrayCritical(array, &iscopy);
+        printf("ADDRESS OF P %p\n", p);
+        memset(p, 'A', 128 << 20);
+
+        arrays[idx_arrays++] = array;
 
         // OpenJDK7 will always return false when we are using
         // GetPrimitiveArrayCritical, and true when we are using
@@ -249,18 +268,20 @@ size_t jvm_balloon_shrinker::_request_memory(JNIEnv *env, size_t size)
             // global reference.  Later on, we will invalidate it when we no
             // longer want this balloon to stay around.
             jobject jref = env->NewGlobalRef(array);
-            env->DeleteLocalRef(array);
+         //   env->DeleteLocalRef(array);
             WITH_LOCK(balloons_lock) {
                 balloon_ptr b{new balloon(static_cast<unsigned char *>(p), jref)};
                 ret += b->empty_area(b);
             }
         }
         env->ReleasePrimitiveArrayCritical(array, p, 0);
+        break;
         // Avoid entering any endless loops. Fail imediately
         if (iscopy)
             break;
     } while (ret < size);
 
+    fuck(env);
     return ret;
 }
 
@@ -288,6 +309,17 @@ void jvm_balloon_shrinker::_thread_loop()
     _thread->set_priority(0.001);
 
     thread_mark_emergency();
+
+    _request_memory(env, 1);
+    //request_memory(1);
+    for (int i = 0; i < 9; i++) {
+        request_memory2(env);
+    }
+    //request_memory(1);
+    request_memory2(env);
+    request_memory2(env);
+    request_memory2(env);
+    request_memory2(env);
 
     while (true) {
         WITH_LOCK(balloons_lock) {
@@ -323,9 +355,9 @@ void jvm_balloon_shrinker::_thread_loop()
                 }
             }
 
-            while ((memory::jvm_heap_reserved() <= 0)) {
-                _request_memory(env, 1);
-            }
+//            while ((memory::jvm_heap_reserved() <= 0)) {
+//                _request_memory(env, 1);
+//            }
             _pending.store(0);
         }
     }
@@ -435,10 +467,6 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
         abort();
     }
 
-    for (int i = 0; i < 11; i++) {
-        request_memory2(env);
-    }
-
     _detach(status);
 
     balloon_shrinker = this;
@@ -449,8 +477,6 @@ jvm_balloon_shrinker::jvm_balloon_shrinker(JavaVM_ *vm)
     // std::thread is implemented ontop of pthreads, so it is fine
     std::thread tmp([=] { _thread_loop(); });
     tmp.detach();
-
-    request_memory(128 << 20);
 }
 
 jvm_balloon_shrinker::~jvm_balloon_shrinker()
