@@ -27,6 +27,7 @@
 #include "java/jvm_balloon.hh"
 #include <fs/fs.hh>
 #include <osv/file.h>
+#include <sys/mman.h>
 
 extern void* elf_start;
 extern size_t elf_size;
@@ -1088,6 +1089,20 @@ void vcleanup(void* addr, size_t size)
         cleanup_intermediate_pages cleaner;
         map_range(reinterpret_cast<uintptr_t>(addr), reinterpret_cast<uintptr_t>(addr), size,
                 cleaner, huge_page_size);
+    }
+}
+
+int madvise(void* addr, size_t size, int advice)
+{
+    WITH_LOCK(vma_list_mutex) {
+        if (!ismapped(addr, size)) {
+            return ENOMEM;
+        }
+        if (advice != MADV_DONTFORK) {
+            return EINVAL;
+        }
+        vdepopulate(addr, size);
+        return 0;
     }
 }
 

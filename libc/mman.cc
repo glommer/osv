@@ -224,3 +224,12 @@ int mincore(void *addr, size_t length, unsigned char *vec)
     return mmu::mincore(addr, length, vec).to_libc();
 #endif /* !AARCH64_PORT_STUB */
 }
+
+int madvise(void *addr, size_t length, int advice)
+{
+    int ret = mmu::madvise(addr, length, advice);
+    if (!ret) {
+        return 0;
+    }
+    return libc_error(ret);
+}
