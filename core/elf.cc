@@ -1132,7 +1132,7 @@ ulong program::register_dtv(object* obj)
     SCOPE_LOCK(_module_index_list_mutex);
     auto i = find(_module_index_list, nullptr);
     if (i != _module_index_list.end()) {
-        *i = obj;
+        osv::rcu_defer([&] { *i = obj; });
         return i - _module_index_list.begin();
     } else {
         _module_index_list.push_back(obj);
@@ -1145,13 +1145,14 @@ void program::free_dtv(object* obj)
     SCOPE_LOCK(_module_index_list_mutex);
     auto i = find(_module_index_list, obj);
     assert(i != _module_index_list.end());
-    *i = nullptr;
+    osv::rcu_defer([&] { *i = nullptr; });
 }
 
 void* program::tls_addr(ulong module)
 {
-    SCOPE_LOCK(_module_index_list_mutex);
-    return _module_index_list[module]->tls_addr();
+    WITH_LOCK(osv::rcu_read_lock) {
+        return _module_index_list[module]->tls_addr();
+    }
 }
 
 // Used in implementation of program::with_modules. We cannot keep the RCU
