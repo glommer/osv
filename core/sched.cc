@@ -784,11 +784,6 @@ void thread::main()
     _func();
 }
 
-thread* thread::current()
-{
-    return sched::s_current;
-}
-
 void thread::wait()
 {
     trace_sched_wait();
