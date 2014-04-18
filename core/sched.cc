@@ -957,39 +957,6 @@ void thread_handle::wake()
     }
 }
 
-void preempt_disable()
-{
-    ++preempt_counter;
-}
-
-void preempt_enable()
-{
-    --preempt_counter;
-    if (preemptable() && need_reschedule && arch::irq_enabled()) {
-        cpu::schedule();
-    }
-}
-
-bool preemptable()
-{
-    return (!preempt_counter);
-}
-
-unsigned int get_preempt_counter()
-{
-    return preempt_counter;
-}
-
-void preempt()
-{
-    if (preemptable()) {
-        sched::cpu::current()->reschedule_from_interrupt(true);
-    } else {
-        // preempt_enable() will pick this up eventually
-        need_reschedule = true;
-    }
-}
-
 timer_list::callback_dispatch::callback_dispatch()
 {
     clock_event->set_callback(this);

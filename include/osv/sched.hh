@@ -690,11 +690,6 @@ private:
     friend struct cpu;
 };
 
-void preempt();
-void preempt_disable() __attribute__((no_instrument_function));
-void preempt_enable() __attribute__((no_instrument_function));
-bool preemptable() __attribute__((no_instrument_function));
-
 thread* current();
 
 // wait_for() support for predicates
@@ -758,6 +753,43 @@ inline void release(mutex_t* mtx)
         mutex_unlock(mtx);
     }
 }
+
+extern unsigned __thread preempt_counter;
+extern bool __thread need_reschedule;
+
+inline bool preemptable()
+{
+    return (!preempt_counter);
+}
+
+inline void preempt()
+{
+    if (preemptable()) {
+        sched::cpu::current()->reschedule_from_interrupt(true);
+    } else {
+        // preempt_enable() will pick this up eventually
+        need_reschedule = true;
+    }
+}
+
+inline void preempt_disable()
+{
+    ++preempt_counter;
+}
+
+inline void preempt_enable()
+{
+    --preempt_counter;
+    if (preemptable() && need_reschedule && arch::irq_enabled()) {
+        cpu::schedule();
+    }
+}
+
+inline unsigned int get_preempt_counter()
+{
+    return preempt_counter;
+}
+
 
 class interruptible
 {
