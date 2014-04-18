@@ -924,18 +924,6 @@ std::string thread::name() const
     return _attr._name.data();
 }
 
-void* thread::get_tls(ulong module)
-{
-    if (module == elf::program::core_module_index) {
-        return _tcb->tls_base;
-    }
-
-    if (module >= _tls.size()) {
-        return nullptr;
-    }
-    return _tls[module].get();
-}
-
 void* thread::setup_tls(ulong module, const void* tls_template,
         size_t init_size, size_t uninit_size)
 {

@@ -24,6 +24,7 @@
 #include <vector>
 #include <osv/rcu.hh>
 #include <osv/clock.hh>
+#include <osv/elf.hh>
 
 // If RUNTIME_PSEUDOFLOAT, runtime_t is a pseudofloat<>. Otherwise, a float.
 #undef RUNTIME_PSEUDOFLOAT
@@ -580,6 +581,19 @@ private:
     static reaper* _s_reaper;
     friend void init_detached_threads_reaper();
 };
+
+inline void* thread::get_tls(ulong module)
+{
+    if (module == elf::program::core_module_index) {
+        return _tcb->tls_base;
+    }
+
+    if (module >= _tls.size()) {
+        return nullptr;
+    }
+
+    return _tls[module].get();
+}
 
 class thread_handle {
 public:
