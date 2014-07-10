@@ -28,6 +28,16 @@ void init(routes& routes)
     {
         return formatter::to_json(processor::features_str());
     });
+
+    diskFeatures.set_handler("json", [](const_req req)
+    {
+        return formatter::to_json("");
+    });
+
+    vifFeatures.set_handler("json", [](const_req req)
+    {
+        return formatter::to_json("");
+    });
 }
 
 }

@@ -26,6 +26,45 @@
                     "deprecated": "false"
                 }
             ]
+        },
+        {
+            "path": "/hw/disks",
+            "operations": [
+                {
+                    "method": "GET",
+                    "summary": "list all present disk features",
+                    "notes": "",
+                    "responseClass": "string",
+                    "nickname" : "diskFeatures",
+                    "produces": [
+                        "application/json",
+                        "application/xml"
+                    ],
+                    "parameters": [
+                    ],
+                    "deprecated": "false"
+                }
+            ]
+        },
+        {
+            "path": "/hw/vifs",
+            "operations": [
+                {
+                    "method": "GET",
+                    "summary": "list all present network card features",
+                    "notes": "",
+                    "responseClass": "string",
+                    "nickname" : "vifFeatures",
+                    "produces": [
+                        "application/json",
+                        "application/xml"
+                    ],
+                    "parameters": [
+                    ],
+                    "deprecated": "false"
+                }
+            ]
         }
+
     ]
 }
