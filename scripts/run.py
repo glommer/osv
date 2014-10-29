@@ -233,7 +233,7 @@ def start_osv_xen(options):
         "vcpus=%s" % (options.vcpus),
         "maxcpus=%s" % (options.vcpus),
         "name='osv-%d'" % (os.getpid()),
-        "disk=['/dev/loop%s,raw,hda,rw']" % os.getpid(),
+        "disk=['file:%s,hda,rw']" % options.image_file,
         "serial='pty'",
         "paused=0",
         "on_crash='preserve'"
@@ -256,7 +256,7 @@ def start_osv_xen(options):
         stty_save()
 
         #create a loop device backed by image file
-        subprocess.call(["losetup", "/dev/loop%s" % os.getpid(), options.image_file])
+#        subprocess.call(["losetup", "/dev/loop%s" % os.getpid(), options.image_file])
         # Launch qemu
         cmdline = ["xl", "create"]
         if not options.detach:
@@ -271,7 +271,7 @@ def start_osv_xen(options):
     finally:
         xenfile.close()
         #delete loop device
-        subprocess.call(["losetup", "-d", "/dev/loop%s" % os.getpid()])
+#        subprocess.call(["losetup", "-d", "/dev/loop%s" % os.getpid()])
         cleanups()
 
 def start_osv_vmware(options):
