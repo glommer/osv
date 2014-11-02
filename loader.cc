@@ -125,6 +125,7 @@ static bool opt_log_backtrace = false;
 static bool opt_mount = true;
 static bool opt_random = true;
 static bool opt_init = true;
+bool opt_xennet = true;
 static std::string opt_console = "all";
 static bool opt_verbose = false;
 static std::string opt_chdir;
@@ -160,6 +161,7 @@ std::tuple<int, char**> parse_options(int ac, char** av)
         ("leak", "start leak detector after boot")
         ("nomount", "don't mount the file system")
         ("norandom", "don't initialize any random device")
+        ("noxennet", "don't initialize Xen's network devices")
         ("noshutdown", "continue running after main() returns")
 	("nohalt", "use poweroff instead of halt if it's aborted")
         ("noinit", "don't run commands from /init")
@@ -232,6 +234,7 @@ std::tuple<int, char**> parse_options(int ac, char** av)
     opt_mount = !vars.count("nomount");
     opt_random = !vars.count("norandom");
     opt_init = !vars.count("noinit");
+    opt_xennet = !vars.count("noxennet");
 
     if (vars.count("console")) {
         auto v = vars["console"].as<std::vector<std::string>>();
@@ -358,7 +361,8 @@ void* do_main_thread(void *_main_args)
     });
     if (has_if) {
         if (opt_ip.size() == 0) {
-            dhcp_start(true);
+		if (opt_xennet)
+	            dhcp_start(true);
         } else {
             for (auto t : opt_ip) {
                 std::vector<std::string> tmp;

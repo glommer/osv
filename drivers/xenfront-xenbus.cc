@@ -173,6 +173,7 @@ int XENBUSB_GET_OTHEREND_NODE(device_t dev, struct xenbus_device_ivars *ivars)
     return error;
 }
 
+extern bool opt_xennet;
 void XENBUSB_ENUMERATE_TYPE(device_t _bus, const char *type)
 {
     xenfront::xenbus *bus = bsd_to_xenbus(_bus);
@@ -180,6 +181,11 @@ void XENBUSB_ENUMERATE_TYPE(device_t _bus, const char *type)
     if (!strcmp(type, "vbd") || !strcmp(type, "vif")) {
         u_int dev_count;
         const char **devices;
+
+	if (!strcmp(type, "vif") && !opt_xennet) {
+		printf("Skipping vif interface\n");
+		return;
+	}
 
         std::string node = osv::sprintf("device/%d", type);
 
